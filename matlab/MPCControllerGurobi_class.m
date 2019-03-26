@@ -5,16 +5,20 @@ classdef MPCControllerGurobi_class < handle
        % =====================================
        g = [0.0; 0.0; 9.81]; % gravity vector   
       
-       mass = 1.0;   % Mass of the robot
+       mass = 43.0;   % Mass of the robot
       
-       I = eye(3);      % Inertia matrix
+       I = [0.5 0.0 0.0;...   % Inertia matrix
+            0.0  2.1 0.0;...
+            0.0  0.0 2.1];
        
-       I_inv = eye(3);
+       I_inv = [1.0/0.5 0.0 0.0;...   % Inertia matrix
+                0.0  1.0/2.1 0.0;...
+                0.0  0.0 1.0/2.1];
        
        mu = 0.6;
        
-       lf = [-2000.0; -2000.0; 0.0]; % lower bound for ground reaction force
-       uf = [2000.0; 2000.0; 2000.0];  % upper bound for ground reaction force
+       lf = [-666.0; -666.0; 10.0]; % lower bound for ground reaction force
+       uf = [666.0; 666.0; 666.0];  % upper bound for ground reaction force
        
         
       % =======================================  
@@ -90,8 +94,30 @@ classdef MPCControllerGurobi_class < handle
            
            % Weighting matrix for tracking errors
            obj.L = eye(13*NP);
+           
+           % z weight
            for i = 1:NP
-              obj.L(13*(i-1)+3,13*(i-1)+3) = 2.0; 
+              obj.L(13*(i-1)+3,13*(i-1)+3) = 50.0; 
+           end
+           
+           % roll weight
+           for i = 1:NP
+              obj.L(13*(i-1)+4,13*(i-1)+4) = 1.0; 
+           end
+           
+           % pitch weight
+           for i = 1:NP
+              obj.L(13*(i-1)+5,13*(i-1)+5) = 1.0; 
+           end
+           
+           % x vel weight
+           for i = 1:NP
+              obj.L(13*(i-1)+7,13*(i-1)+7) = 1.0; 
+           end
+           
+           % y vel weight
+           for i = 1:NP
+              obj.L(13*(i-1)+8,13*(i-1)+8) = 20.0; 
            end
            
            % Weighting matrix for total ground reaction forces
@@ -173,6 +199,7 @@ classdef MPCControllerGurobi_class < handle
        
        function [F, current_state] = update(obj, x0, x_ref, yaw, v1, v2, v3, v4, C) 
            
+           tic
            obj.setBounds(C);
            
            obj.A(4:6,10:12) = obj.rot(yaw);
@@ -205,6 +232,7 @@ classdef MPCControllerGurobi_class < handle
            for i = 2:obj.np
               obj.Aqp((1+13*(i-1)):(13*i),:) =  obj.Ad*obj.Aqp((1+13*(i-2)):(13*(i-1)),:);
            end
+
            
            n = 1;
 
@@ -217,8 +245,8 @@ classdef MPCControllerGurobi_class < handle
            end
            
            obj.Q(1:end-1,1:end-1) = (obj.Bqp'*obj.L*obj.Bqp + obj.K);
-           obj.H(1:end-1,1) = 2*obj.Bqp'*obj.L*(obj.Aqp*x0 - obj.L*x_ref);
-           obj.H(end,1) = x0'*obj.Aqp'*obj.L*obj.Aqp*x0 + x_ref'*obj.L*x_ref - x0'*obj.Aqp'*obj.L*x_ref;
+           obj.H(1:end-1,1) = 2.0*obj.Bqp'*obj.L*(obj.Aqp*x0 - x_ref);
+           obj.H(end,1) = 1.0*(x0'*obj.Aqp'*obj.L*obj.Aqp*x0 + x_ref'*obj.L*x_ref - 2.0*x0'*obj.Aqp'*obj.L*x_ref);
            
            %%%%% Updating current model 
            model.Q = sparse(obj.Q);
@@ -233,6 +261,8 @@ classdef MPCControllerGurobi_class < handle
            res = gurobi(model, params);
            
            F = res.x(1:12); % Control effort
+           
+           toc
            
            % Simulate dynamics
            [t,state] = ode45(@(t,state) simulateDynamics_MPC(t,state,F, ...
